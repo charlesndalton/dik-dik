@@ -21,10 +21,7 @@ async fn main() -> Result<()> {
     let mut committee_report = String::from("[DAILY TOKEMAK REPORT ☢️]:%0A");
 
     for (asset, strategy_address) in v["strategies"]["tokemak"].as_object().unwrap().iter() {
-        let t_asset_balance = match asset.as_str() {
-            "WETH" => blockchain_client::get_t_weth_balance(&client, &strategy_address.as_str().unwrap()).await?,
-            _ => blockchain_client::get_t_asset_balance(&client, &strategy_address.as_str().unwrap()).await?
-        };
+        let t_asset_balance = blockchain_client::get_t_asset_balance(&client, &strategy_address.as_str().unwrap()).await?;
 
         let balance = format!("t{} balance: {}", asset, t_asset_balance);
 
@@ -32,7 +29,8 @@ async fn main() -> Result<()> {
         committee_report.push_str("%0A");
     }
 
-    telegram_client::send_message_to_committee(&committee_report, &telegram_token).await?;
+    println!("{:?}", committee_report);
+    //telegram_client::send_message_to_committee(&committee_report, &telegram_token).await?;
 
     Ok(())
 }
@@ -82,24 +80,9 @@ mod blockchain_client {
         Ok(Arc::new(client))
     }
 
-    // WETH is special
-    pub async fn get_t_weth_balance(client: &Client, strategy_address: &str) -> Result<Decimal> {
-        let strategy_address = strategy_address.parse::<Address>()?;
-        let t_weth_address = "0xD3D13a578a53685B4ac36A1Bab31912D2B2A2F36".parse::<Address>()?;
-        let t_weth = IERC20::new(t_weth_address, Arc::clone(&client));
-
-        let decimals: u32 = 18;
-        let mut t_weth_balance = Decimal::from_i128_with_scale(t_weth.balance_of(strategy_address).call().await?.as_u128().try_into().unwrap(), decimals);
-        t_weth_balance.rescale(6);
-
-        Ok(t_weth_balance)
-    }
-
     pub async fn get_t_asset_balance(client: &Client, strategy_address: &str) -> Result<Decimal> {
         let strategy_address = strategy_address.parse::<Address>()?;
-        let strategy = TokemakStrategy::new(strategy_address, Arc::clone(&client));
-
-        let t_asset_address = strategy.t_asset().call().await?;
+        let t_asset_address = get_t_asset_address(client, strategy_address).await?;
         let t_asset = IERC20::new(t_asset_address, Arc::clone(&client));
 
         let decimals: u32 = t_asset.decimals().call().await?.into();
@@ -109,6 +92,17 @@ mod blockchain_client {
         Ok(t_asset_balance)
     }
 
+    pub async fn get_liquid_want_in_pool(client: &Client, strategy_address: Address) -> {}
+
+    async fn get_t_asset_address(client: &Client, strategy_address: Address) -> Result<Address> {
+        let weth_strategy_address = "0x2EFB43C8C9AFe71d98B3093C3FD4dEB7Ce543C6D".parse::<Address>()?;
+
+        if strategy_address == weth_strategy_address {
+            Ok("0xD3D13a578a53685B4ac36A1Bab31912D2B2A2F36".parse::<Address>()?)
+        } else {
+            Ok(TokemakStrategy::new(strategy_address, Arc::clone(&client)).t_asset().call().await?)
+        }
+    }
 }
 
 mod types {
