@@ -1,0 +1,3 @@
+[submodule "src/contract-address-registry"]
+	path = src/contract-address-registry
+	url = git@github.com:yearn/contract-address-registry.git
