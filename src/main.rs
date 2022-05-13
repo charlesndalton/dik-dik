@@ -1,5 +1,8 @@
 use types::Result;
 use std::env;
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::Path;
 
 const TOKEMAK_COMMITTEE_TELEGRAM_CHAT_ID: i64 = -1001175962929;
 
@@ -7,6 +10,11 @@ const TOKEMAK_COMMITTEE_TELEGRAM_CHAT_ID: i64 = -1001175962929;
 async fn main() -> Result<()> {
     let token = env::var("DIK_DIK_TELEGRAM_TOKEN").expect("DIK_DIK_TELEGRAM_TOKEN not set");
     let infura_api_key = env::var("INFURA_API_KEY").expect("INFURA_API_KEY not set");
+
+    let mut file = File::open("./src/contract-address-registry/ethereum.json")?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    println!("{:?}", contents);
     let dai_strategy = "0xBD455373692c8F4bae2131d66BFfD5fE26C6b659";
 
     let client = blockchain_client::create_client(&infura_api_key)?;
@@ -78,6 +86,9 @@ mod types {
 
         #[error(transparent)]
         EyreReport(#[from] eyre::Report),
+
+        #[error(transparent)]
+        IOError(#[from] std::io::Error),
     }
 
     pub type Result<T> = std::result::Result<T, Error>;
