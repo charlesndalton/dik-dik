@@ -2,9 +2,7 @@ use types::Result;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
-use std::path::Path;
 use serde_json::{Value};
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -18,18 +16,26 @@ async fn main() -> Result<()> {
 
     let client = blockchain_client::create_client(&infura_api_key)?;
 
-    let mut committee_report = String::from("[DAILY TOKEMAK REPORT ☢️]:%0A");
+    let mut committee_report = String::from("[DAILY TOKEMAK REPORT ☢️]:
+");
 
     for (asset, strategy_address) in v["strategies"]["tokemak"].as_object().unwrap().iter() {
         let t_asset_balance = blockchain_client::get_t_asset_balance(&client, &strategy_address.as_str().unwrap()).await?;
+        let want_balance_in_pool = blockchain_client::get_liquid_want_in_pool(&client, &strategy_address.as_str().unwrap()).await?;
+        let t_asset_total_supply = blockchain_client::get_t_asset_total_supply(&client, &strategy_address.as_str().unwrap()).await?;
+        let mut health_ratio = want_balance_in_pool / t_asset_total_supply;
+        health_ratio.rescale(2);
 
-        let balance = format!("t{} balance: {}", asset, t_asset_balance);
-
-        committee_report.push_str(&balance);
-        committee_report.push_str("%0A");
+        committee_report.push_str(&format!(
+"Report for {}
+ - amount of t{} we own: {}
+ - health ratio (A/L): {}
+ - tokemak assets: {}
+ - tokemak liabilities: {}
+", asset, asset, t_asset_balance, health_ratio, want_balance_in_pool, t_asset_total_supply));
     }
 
-    println!("{:?}", committee_report);
+    print!("{}", committee_report);
     //telegram_client::send_message_to_committee(&committee_report, &telegram_token).await?;
 
     Ok(())
@@ -41,11 +47,12 @@ async fn daily_check() -> Result<()> {
 
 mod telegram_client {
     use crate::types::Result;
+    use urlencoding::encode;
 
     const TOKEMAK_COMMITTEE_TELEGRAM_CHAT_ID: i64 = -1001175962929;
 
     pub async fn send_message_to_committee(message: &str, token: &str) -> Result<()> {
-        let url = format!("https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}", token, TOKEMAK_COMMITTEE_TELEGRAM_CHAT_ID, message);
+        let url = format!("https://api.telegram.org/bot{}/sendMessage?chat_id={}&text={}", token, TOKEMAK_COMMITTEE_TELEGRAM_CHAT_ID, encode(message));
 
         reqwest::get(url)
             .await?;
@@ -84,15 +91,44 @@ mod blockchain_client {
         let strategy_address = strategy_address.parse::<Address>()?;
         let t_asset_address = get_t_asset_address(client, strategy_address).await?;
         let t_asset = IERC20::new(t_asset_address, Arc::clone(&client));
+        let decimals = get_t_asset_decimals(&t_asset).await?;
 
-        let decimals: u32 = t_asset.decimals().call().await?.into();
         let mut t_asset_balance = Decimal::from_i128_with_scale(t_asset.balance_of(strategy_address).call().await?.as_u128().try_into().unwrap(), decimals);
         t_asset_balance.rescale(6);
 
         Ok(t_asset_balance)
     }
 
-    pub async fn get_liquid_want_in_pool(client: &Client, strategy_address: Address) -> {}
+    pub async fn get_t_asset_total_supply(client: &Client, strategy_address: &str) -> Result<Decimal> {
+        let strategy_address = strategy_address.parse::<Address>()?;
+        let t_asset_address = get_t_asset_address(client, strategy_address).await?;
+        let t_asset = IERC20::new(t_asset_address, Arc::clone(&client));
+        let decimals = get_t_asset_decimals(&t_asset).await?;
+
+        let mut t_asset_total_supply = Decimal::from_i128_with_scale(t_asset.total_supply().call().await?.as_u128().try_into().unwrap(), decimals);
+        t_asset_total_supply.rescale(6);
+
+        Ok(t_asset_total_supply)
+    }
+        
+    pub async fn get_liquid_want_in_pool(client: &Client, strategy_address: &str) -> Result<Decimal> {
+        let strategy_address = strategy_address.parse::<Address>()?;
+        let t_asset_address = get_t_asset_address(client, strategy_address).await?;
+
+        let want_address = TokemakStrategy::new(strategy_address, Arc::clone(&client)).want().call().await?;
+        let want = IERC20::new(want_address, Arc::clone(&client));
+
+        let want_decimals = want.decimals().call().await?.into();
+        let mut want_pool_balance = Decimal::from_i128_with_scale(want.balance_of(t_asset_address).call().await?.as_u128().try_into().unwrap(), want_decimals); // t asset address is same as liquidity pool address
+        want_pool_balance.rescale(6);
+
+        Ok(want_pool_balance)
+    }
+
+    async fn get_t_asset_decimals(t_asset: &IERC20<Provider::<Http>>) -> Result<u32> {
+        let decimals: u32 = t_asset.decimals().call().await?.into();
+        Ok(decimals)
+    }
 
     async fn get_t_asset_address(client: &Client, strategy_address: Address) -> Result<Address> {
         let weth_strategy_address = "0x2EFB43C8C9AFe71d98B3093C3FD4dEB7Ce543C6D".parse::<Address>()?;
