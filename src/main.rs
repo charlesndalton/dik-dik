@@ -8,6 +8,8 @@ async fn main() -> Result<()> {
 
     let report = report_creator::create_report(&infura_api_key).await?;
 
+    println!("report: {:?}", report);
+
     Ok(())
 }
     
@@ -53,7 +55,7 @@ async fn daily_check() -> Result<()> {
 mod report_creator {
     use crate::{
         blockchain_client,
-        types::{Result, Error, TokemakReport}
+        types::{Result, Error, TokemakReport, IndividualAssetTokemakReport}
     };
     use std::fs::File;
     use std::io::prelude::*;
@@ -103,8 +105,10 @@ mod report_creator {
             let assets_in_lp_tokens_with_impermanent_loss = blockchain_client::get_want_in_univ2_pools(&want, &eth_client, &accounts_to_check_for_lp_tokens_with_impermanent_loss).await?;
 
             let accounts_to_check_for_lp_tokens_without_impermanent_loss = vec![manager_address, coordinator_address];
-            let mut assets_in_lp_tokens_without_impermanent_loss = dec!(0);
-            println!("{} free: {}, IL-able: {}", asset_name, free_assets, assets_in_lp_tokens_with_impermanent_loss);
+            let assets_in_lp_tokens_without_impermanent_loss = blockchain_client::get_want_in_curve_pools(&want, &eth_client, &accounts_to_check_for_lp_tokens_without_impermanent_loss).await?;
+            let total_assets = free_assets + assets_in_lp_tokens_with_impermanent_loss + assets_in_lp_tokens_without_impermanent_loss;
+
+            report.push(IndividualAssetTokemakReport::new(asset_name.to_string(), t_asset_strategy_balance, t_asset_total_supply, total_assets, free_assets, assets_in_lp_tokens_without_impermanent_loss, assets_in_lp_tokens_with_impermanent_loss));
         }
 
         Ok(report)
@@ -224,22 +228,6 @@ mod blockchain_client {
         Ok(want_pool_balance)
     }
 
-    //pub async fn get_liquid_want_in_manager(client: &Client, strategy_address: &str) -> Result<Decimal> {
-//        let strategy_address = strategy_address.parse::<Address>()?;
-//        let want_address = TokemakStrategy::new(strategy_address, Arc::clone(&client)).want().call().await?;
-//        let want = IERC20::new(want_address, Arc::clone(&client));
-//        let want_decimals = want.decimals().call().await?.into();
-//        let mut want_manager_balance = Decimal::from_i128_with_scale(want.balance_of(manager_address).call().await?.as_u128().try_into().unwrap(), want_decimals);
-//       want_manager_balance.rescale(6);
-//
-//        if want_address == "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>()? { //If want is WETH, also account for WETH in the treasury
-//            let treasury_address = "0x8b4334d4812C530574Bd4F2763FcD22dE94A969B".parse::<Address>()?;
-//            let want_treasury_balance = Decimal::from_i128_with_scale(want.balance_of(treasury_address).call().await?.as_u128().try_into().unwrap(), want_decimals);
-//            want_manager_balance += want_treasury_balance;
-//        }
-
-//        Ok(want_manager_balance)
-//    }
 
     pub async fn get_want_in_univ2_pools(want: &IERC20, client: &Client, accounts_to_check: &Vec<Address>) -> Result<Decimal> {
         let univ2_pool_addresses = vec!["0x61eB53ee427aB4E007d78A9134AaCb3101A2DC23", "0x470e8de2eBaef52014A47Cb5E6aF86884947F08c", "0x43AE24960e5534731Fc831386c07755A2dc33D47", "0xecBa967D84fCF0405F6b32Bc45F4d36BfDBB2E81", "0xe55c3e83852429334A986B265d03b879a3d188Ac", "0xdC08159A6C82611aEB347BA897d82AC1b80D9419", "0xAd5B1a6ABc1C9598C044cea295488433a3499eFc"];
@@ -266,43 +254,38 @@ mod blockchain_client {
     }
     
 
-//    pub async fn get_want_in_curve_pools(client: &Client, strategy_address: &str) -> Result<Decimal> {
-//        let curve_pools = vec![CurvePoolStruct::new("0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B".to_string(), "0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B".to_string(), Some("0xB900EF131301B307dB5eFcbed9DBb50A3e209B2e".to_string())), CurvePoolStruct::new("0x0437ac6109e8A366A1F4816edF312A36952DB856".to_string(), "0x0437ac6109e8A366A1F4816edF312A36952DB856".to_string(), None), CurvePoolStruct::new("0x50B0D9171160d6EB8Aa39E090Da51E7e078E81c4".to_string(), "0x50B0D9171160d6EB8Aa39E090Da51E7e078E81c4".to_string(), None), CurvePoolStruct::new("0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA".to_string(), "0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA".to_string(), Some("0x2ad92A7aE036a038ff02B96c88de868ddf3f8190".to_string()))];
-//        let manager_address = "0xA86e412109f77c45a3BC1c5870b880492Fb86A14".parse::<Address>()?;
-//        let coordinator_address = "0x90b6C61B102eA260131aB48377E143D6EB3A9d4B".parse::<Address>()?;
-//        let strategy_address = strategy_address.parse::<Address>()?;
-//        let want_address = TokemakStrategy::new(strategy_address, Arc::clone(&client)).want().call().await?;
-//        let want = IERC20::new(want_address, Arc::clone(&client));
-//        let mut want_owned_in_pools = Decimal::new(0, 6);
+    pub async fn get_want_in_curve_pools(want: &IERC20, client: &Client, accounts_to_check: &Vec<Address>) -> Result<Decimal> {
+        let curve_pools = vec![CurvePoolStruct::new("0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B".to_string(), "0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B".to_string(), Some("0xB900EF131301B307dB5eFcbed9DBb50A3e209B2e".to_string())), CurvePoolStruct::new("0x0437ac6109e8A366A1F4816edF312A36952DB856".to_string(), "0x0437ac6109e8A366A1F4816edF312A36952DB856".to_string(), None), CurvePoolStruct::new("0x50B0D9171160d6EB8Aa39E090Da51E7e078E81c4".to_string(), "0x50B0D9171160d6EB8Aa39E090Da51E7e078E81c4".to_string(), None), CurvePoolStruct::new("0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA".to_string(), "0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA".to_string(), Some("0x2ad92A7aE036a038ff02B96c88de868ddf3f8190".to_string()))];
+        let mut want_owned_in_pools = Decimal::new(0, 6);
 
-//        for curve_pool in curve_pools {
-//            let pool_address = curve_pool.pool_address().parse::<Address>()?;
-//            let token_address = curve_pool.token_address().parse::<Address>()?;
+        for curve_pool in curve_pools {
+            let pool_address = curve_pool.pool_address().parse::<Address>()?;
+            let token_address = curve_pool.token_address().parse::<Address>()?;
 
-//            let pool = CurvePool::new(pool_address, Arc::clone(&client));
-//            let lp_token = IERC20::new(token_address, Arc::clone(&client));
-//            let lp_token_name: String = lp_token.name().call().await?.into();
-//            let lp_token_symbol: String = lp_token.symbol().call().await?.into();
-//            let want_symbol: String = want.symbol().call().await?.into();
+            let pool = CurvePool::new(pool_address, Arc::clone(&client));
+            let lp_token = IERC20::new(token_address, Arc::clone(&client));
+            let lp_token_name: String = lp_token.name().call().await?.into();
+            let lp_token_symbol: String = lp_token.symbol().call().await?.into();
+            let want_symbol: String = want.symbol().call().await?.into();
 
-//            if lp_token_name.as_str().contains(want_symbol.as_str()) || lp_token_symbol.as_str().contains(want_symbol.as_str()) {
-//                let mut owned_lp_tokens = Decimal::from_i128_with_scale(lp_token.balance_of(manager_address).call().await?.as_u128().try_into().unwrap(), 18);
-//                owned_lp_tokens += Decimal::from_i128_with_scale(lp_token.balance_of(coordinator_address).call().await?.as_u128().try_into().unwrap(), 18);
-//                if curve_pool.convex_rewards_pool_address().is_some() {
-//                    let convex_rewards_pool_address = curve_pool.convex_rewards_pool_address().as_ref().unwrap().parse::<Address>()?;
-//                    let rewards = IERC20::new(convex_rewards_pool_address, Arc::clone(&client));
-//                    owned_lp_tokens += Decimal::from_i128_with_scale(rewards.balance_of(manager_address).call().await?.as_u128().try_into().unwrap(), 18);
-//                    owned_lp_tokens += Decimal::from_i128_with_scale(rewards.balance_of(coordinator_address).call().await?.as_u128().try_into().unwrap(), 18);
-//                }
-//                let virtual_price = Decimal::from_i128_with_scale(pool.get_virtual_price().call().await?.as_u128().try_into().unwrap(), 18);
+            if lp_token_name.as_str().contains(want_symbol.as_str()) || lp_token_symbol.as_str().contains(want_symbol.as_str()) {
+                let mut owned_lp_tokens = dec!(0);
+                for account in accounts_to_check {
+                    owned_lp_tokens += get_balance_of(&lp_token, *account).await?;
+                    if curve_pool.convex_rewards_pool_address().is_some() {
+                        let convex_rewards_pool_address = curve_pool.convex_rewards_pool_address().as_ref().unwrap().parse::<Address>()?;
+                        let rewards = IERC20::new(convex_rewards_pool_address, Arc::clone(&client));
+                        owned_lp_tokens += Decimal::from_i128_with_scale(rewards.balance_of(*account).call().await?.as_u128().try_into().unwrap(), 18);
+                    }
+                }
+                let virtual_price = Decimal::from_i128_with_scale(pool.get_virtual_price().call().await?.as_u128().try_into().unwrap(), 18);
+                want_owned_in_pools += owned_lp_tokens * virtual_price;
+            }
+        }
+        want_owned_in_pools.rescale(6);
 
-//                want_owned_in_pools += owned_lp_tokens * virtual_price;
-//            }
-//        }
-//        want_owned_in_pools.rescale(6);
-
-//        Ok(want_owned_in_pools)
-//    }
+        Ok(want_owned_in_pools)
+    }
 
 
 
@@ -356,7 +339,7 @@ mod types {
 
     pub type TokemakReport = Vec<IndividualAssetTokemakReport>;
 
-    #[derive(Getters, new)]
+    #[derive(Getters, new, Debug)]
     pub struct IndividualAssetTokemakReport {
         asset_name: String,
         t_asset_strategy_balance: Decimal,
