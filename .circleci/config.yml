@@ -12,6 +12,7 @@ jobs:
     # See: https://circleci.com/docs/2.0/configuration-reference/#steps
     steps:
       - checkout
+      - git submodule update --init --recursive
       - setup_remote_docker
       - run: "docker login -u $DOCKER_HUB_USERNAME -p $DOCKER_HUB_PASSWORD"
       - run:

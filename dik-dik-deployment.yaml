@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dik-dik-deployment
+  labels:
+    app: dik-dik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dik-dik
+  template:
+    metadata:
+      labels:
+        app: dik-dik
+    spec:
+      containers:
+      - name: dik-dik
+        image: charlesdalton/dik-dik:latest
+        env:
+        - name: DIK_DIK_TELEGRAM_TOKEN
+          value: ${DIK_DIK_TELEGRAM_TOKEN}
+        - name: INFURA_API_KEY
+          value: ${INFURA_API_KEY}
