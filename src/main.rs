@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     }
 
     print!("{}", committee_report);
-    //telegram_client::send_message_to_committee(&committee_report, &telegram_token).await?;
+    telegram_client::send_message_to_committee(&committee_report, &telegram_token).await?;
 
     Ok(())
 }
@@ -147,6 +147,12 @@ mod blockchain_client {
         let want_decimals = want.decimals().call().await?.into();
         let mut want_manager_balance = Decimal::from_i128_with_scale(want.balance_of(manager_address).call().await?.as_u128().try_into().unwrap(), want_decimals);
         want_manager_balance.rescale(6);
+
+        if want_address == "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>()? { //If want is WETH, also account for WETH in the treasury
+            let treasury_address = "0x8b4334d4812C530574Bd4F2763FcD22dE94A969B".parse::<Address>()?;
+            let want_treasury_balance = Decimal::from_i128_with_scale(want.balance_of(treasury_address).call().await?.as_u128().try_into().unwrap(), want_decimals);
+            want_manager_balance += want_treasury_balance;
+        }
 
         Ok(want_manager_balance)
     }
