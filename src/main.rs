@@ -9,17 +9,14 @@ async fn main() -> Result<()> {
     let telegram_token = env::var("DIK_DIK_TELEGRAM_TOKEN").expect("DIK_DIK_TELEGRAM_TOKEN not set");
     let infura_api_key = env::var("INFURA_API_KEY").expect("INFURA_API_KEY not set");
 
-    let mut file = File::open("./src/contract-address-registry/ethereum.json")?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
-    let v: Value = serde_json::from_str(&contents)?;
+    let eth_addresses = get_eth_addresses()?;
 
     let client = blockchain_client::create_client(&infura_api_key)?;
 
     let mut committee_report = String::from("[DAILY TOKEMAK REPORT ☢️]:
 ");
 
-    for (asset, strategy_address) in v["strategies"]["tokemak"].as_object().unwrap().iter() {
+    for (asset, strategy_address) in eth_addresses["strategies"]["tokemak"].as_object().unwrap().iter() {
         let t_asset_balance = blockchain_client::get_t_asset_balance(&client, &strategy_address.as_str().unwrap()).await?;
         let want_balance_in_pool = blockchain_client::get_liquid_want_in_pool(&client, &strategy_address.as_str().unwrap()).await?;
         let want_balance_in_manager = blockchain_client::get_liquid_want_in_manager(&client, &strategy_address.as_str().unwrap()).await?;
@@ -44,9 +41,18 @@ async fn main() -> Result<()> {
     }
 
     print!("{}", committee_report);
-    telegram_client::send_message_to_committee(&committee_report, &telegram_token).await?;
+    //telegram_client::send_message_to_committee(&committee_report, &telegram_token).await?;
 
     Ok(())
+}
+
+fn get_eth_addresses() -> Result<Value> {
+    let mut file = File::open("./src/contract-address-registry/ethereum.json")?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    let eth_addresses: Value = serde_json::from_str(&contents)?;
+
+    Ok(eth_addresses)
 }
 
 async fn daily_check() -> Result<()> {
