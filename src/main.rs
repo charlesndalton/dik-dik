@@ -24,7 +24,8 @@ async fn main() -> Result<()> {
         let want_balance_in_pool = blockchain_client::get_liquid_want_in_pool(&client, &strategy_address.as_str().unwrap()).await?;
         let want_balance_in_manager = blockchain_client::get_liquid_want_in_manager(&client, &strategy_address.as_str().unwrap()).await?;
         let tokemak_liquid_assets = want_balance_in_pool + want_balance_in_manager;
-        let want_balance_in_manager_lp_tokens = blockchain_client::get_want_in_univ2_pools(&client, &strategy_address.as_str().unwrap()).await?;
+        let want_balance_in_manager_uni_lp_tokens = blockchain_client::get_want_in_univ2_pools(&client, &strategy_address.as_str().unwrap()).await?;
+        let want_balance_in_manager_curve_lp_tokens = blockchain_client::get_want_in_curve_pools(&client, &strategy_address.as_str().unwrap()).await?;
         let t_asset_total_supply = blockchain_client::get_t_asset_total_supply(&client, &strategy_address.as_str().unwrap()).await?;
         let mut health_ratio = tokemak_liquid_assets / t_asset_total_supply;
         health_ratio.rescale(2);
@@ -35,8 +36,9 @@ async fn main() -> Result<()> {
  - health ratio (A/L): {}
  - tokemak free assets: {}
  - tokemak uni LP assets: {}
+ - tokemak curve LP assets: {}
  - tokemak liabilities: {}
-", asset, asset, t_asset_balance, health_ratio, tokemak_liquid_assets, want_balance_in_manager_lp_tokens, t_asset_total_supply));
+", asset, asset, t_asset_balance, health_ratio, tokemak_liquid_assets, want_balance_in_manager_uni_lp_tokens, want_balance_in_manager_curve_lp_tokens, t_asset_total_supply));
     }
 
     print!("{}", committee_report);
@@ -68,7 +70,7 @@ mod telegram_client {
 mod blockchain_client {
     use ethers::prelude::*;
     use std::sync::Arc;
-    use crate::types::Result;
+    use crate::types::{Result, CurvePool as CurvePoolStruct};
     use rust_decimal::prelude::*;
     use rust_decimal_macros::dec;
     abigen!(
@@ -82,6 +84,12 @@ mod blockchain_client {
         "./src/abis/TokemakStrategy.json",
         event_derives(serde::Deserialize, serde::Serialize)
     );
+
+    abigen!(
+        CurvePool,
+        "./src/abis/CurvePool.json",
+        event_derives(serde::Deserialize, serde::Serialize)
+    );    
 
     pub type Client = Arc<Provider::<Http>>;
 
@@ -163,6 +171,37 @@ mod blockchain_client {
             let share_of_pool = owned_lp_tokens / lp_token_total_supply;
             want_owned_in_pools += want_in_pool * share_of_pool;
         }
+        want_owned_in_pools.rescale(6);
+        Ok(want_owned_in_pools)
+    }
+    
+
+    pub async fn get_want_in_curve_pools(client: &Client, strategy_address: &str) -> Result<Decimal> {
+        let curve_pools = vec![CurvePoolStruct::new("0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B".to_string(), "0xd632f22692FaC7611d2AA1C0D552930D43CAEd3B".to_string()), CurvePoolStruct::new("0x0437ac6109e8A366A1F4816edF312A36952DB856".to_string(), "0x0437ac6109e8A366A1F4816edF312A36952DB856".to_string()), CurvePoolStruct::new("0x50B0D9171160d6EB8Aa39E090Da51E7e078E81c4".to_string(), "0x50B0D9171160d6EB8Aa39E090Da51E7e078E81c4".to_string()), CurvePoolStruct::new("0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA".to_string(), "0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA".to_string())];
+        let manager_address = "0xA86e412109f77c45a3BC1c5870b880492Fb86A14".parse::<Address>()?;
+        let strategy_address = strategy_address.parse::<Address>()?;
+        let want_address = TokemakStrategy::new(strategy_address, Arc::clone(&client)).want().call().await?;
+        let want = IERC20::new(want_address, Arc::clone(&client));
+        let mut want_owned_in_pools = Decimal::new(0, 6);
+
+        for curve_pool in curve_pools {
+            let pool_address = curve_pool.pool_address().parse::<Address>()?;
+            let token_address = curve_pool.token_address().parse::<Address>()?;
+
+            let pool = CurvePool::new(pool_address, Arc::clone(&client));
+            let lp_token = IERC20::new(token_address, Arc::clone(&client));
+            let lp_token_name: String = lp_token.name().call().await?.into();
+            let lp_token_symbol: String = lp_token.symbol().call().await?.into();
+            let want_symbol: String = want.symbol().call().await?.into();
+
+            if lp_token_name.as_str().contains(want_symbol.as_str()) || lp_token_symbol.as_str().contains(want_symbol.as_str()) {
+                let owned_lp_tokens = Decimal::from_i128_with_scale(lp_token.balance_of(manager_address).call().await?.as_u128().try_into().unwrap(), 18);
+                let virtual_price = Decimal::from_i128_with_scale(pool.get_virtual_price().call().await?.as_u128().try_into().unwrap(), 18);
+
+                want_owned_in_pools += owned_lp_tokens * virtual_price;
+            }
+        }
+        want_owned_in_pools.rescale(6);
 
         Ok(want_owned_in_pools)
     }
@@ -185,6 +224,9 @@ mod blockchain_client {
 }
 
 mod types {
+    use derive_getters::{Getters};
+    use derive_new::new;
+
     #[derive(Debug, thiserror::Error)]
     pub enum Error {
         #[error(transparent)]
@@ -210,4 +252,10 @@ mod types {
     }
 
     pub type Result<T> = std::result::Result<T, Error>;
+
+    #[derive(Getters, new)]
+    pub struct CurvePool {
+        pool_address: String,
+        token_address: String,
+    }
 }
